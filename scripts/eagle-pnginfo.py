@@ -11,10 +11,13 @@ from scripts.tag_generator import TagGenerator
 from PIL import Image, PngImagePlugin
 
 DEBUG = False
+google_drive_folder = "/content/gdrive/MyDrive/Eagle"
+
 
 def dprint(msg):
     if DEBUG:
         print(msg)
+
 
 # -----------------------------------------------------------------------------
 # ヘルパー関数：プロンプト文字列の分割
@@ -32,6 +35,7 @@ def split_prompt(prompt):
     tokens = [token.strip() for token in tokens if token and token.strip() != ""]
     return tokens
 
+
 def process_prompt(prompt, prefix=""):
     """
     プロンプト文字列を分割し、必要に応じて各トークンに接頭辞を付与して返します。
@@ -41,10 +45,12 @@ def process_prompt(prompt, prefix=""):
         tokens = [f"{prefix}{token}" for token in tokens]
     return tokens
 
+
 # -----------------------------------------------------------------------------
 # 現在のスクリプトフォルダのパスを取得
 # -----------------------------------------------------------------------------
 path_root = paths.script_path
+
 
 def on_ui_settings():
     # Google Drive への転送用設定項目を追加します
@@ -53,7 +59,7 @@ def on_ui_settings():
         shared.OptionInfo(
             False,
             "Google Drive に転送する",
-            section=("google_drive_transfer", "Google Drive 転送"),
+            section=("google_drive_transfer", "Eagle Pnginfo"),
         ),
     )
     shared.opts.add_option(
@@ -61,7 +67,7 @@ def on_ui_settings():
         shared.OptionInfo(
             False,
             "生成情報を画像に埋め込む",
-            section=("google_drive_transfer", "Google Drive 転送"),
+            section=("google_drive_transfer", "Eagle Pnginfo"),
         ),
     )
     shared.opts.add_option(
@@ -69,7 +75,7 @@ def on_ui_settings():
         shared.OptionInfo(
             False,
             "正のプロンプトをタグとして保存",
-            section=("google_drive_transfer", "Google Drive 転送"),
+            section=("google_drive_transfer", "Eagle Pnginfo"),
         ),
     )
     shared.opts.add_option(
@@ -79,7 +85,7 @@ def on_ui_settings():
             "負のプロンプトをタグとして保存",
             gr.Radio,
             {"choices": ["None", "tag", "n:tag"]},
-            section=("google_drive_transfer", "Google Drive 転送"),
+            section=("google_drive_transfer", "Eagle Pnginfo"),
         ),
     )
     shared.opts.add_option(
@@ -87,16 +93,17 @@ def on_ui_settings():
         shared.OptionInfo(
             False,
             "タグ保存時に prompt parser を使用",
-            section=("google_drive_transfer", "Google Drive 転送"),
+            section=("google_drive_transfer", "Eagle Pnginfo"),
         ),
     )
     shared.opts.add_option(
         "additional_tags_for_google_drive",
         shared.OptionInfo(
-            "", "追加タグ (カンマ区切り)", section=("google_drive_transfer", "Google Drive 転送")
+            "", "追加タグ (カンマ区切り)", section=("google_drive_transfer", "Eagle Pnginfo")
         ),
     )
     # 転送先フォルダは固定 /content/gdrive/MyDrive/Eagle とするため、オプションは不要です
+
 
 def on_image_saved(params: script_callbacks.ImageSaveParams):
     if not shared.opts.enable_google_drive_transfer:
@@ -146,7 +153,6 @@ def on_image_saved(params: script_callbacks.ImageSaveParams):
             tags += _tags
 
     # 転送先の Google Drive のフォルダパス（※Drive のマウントが完了している前提）
-    google_drive_folder = "/content/gdrive/MyDrive/Eagle"
     if not os.path.exists(google_drive_folder):
         try:
             os.makedirs(google_drive_folder, exist_ok=True)
@@ -171,6 +177,7 @@ def on_image_saved(params: script_callbacks.ImageSaveParams):
     except Exception as e:
         dprint("DEBUG: 画像ファイルの情報埋め込みおよび保存に失敗しました")
         dprint(e)
+
 
 # コールバックの登録
 script_callbacks.on_image_saved(on_image_saved)
