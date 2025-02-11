@@ -39,6 +39,7 @@ def split_prompt(prompt):
 def process_prompt(prompt, prefix=""):
     """
     プロンプト文字列を分割し、必要に応じて各トークンに接頭辞を付与して返します。
+    ※通常、Parser.prompt_to_tags() で既に正のプロンプト全体が対象となっている前提です。
     """
     tokens = split_prompt(prompt)
     if prefix:
@@ -114,13 +115,33 @@ def on_image_saved(params: script_callbacks.ImageSaveParams):
 
     # 保存済み画像ファイルの絶対パスを取得
     fullfn = os.path.join(path_root, params.filename)
-    info = params.pnginfo.get("parameters", None)
     basename = os.path.basename(fullfn)
     filename_without_ext = os.path.splitext(basename)[0]
 
-    # プロンプト情報の取得
-    pos_prompt = params.p.prompt
-    neg_prompt = params.p.negative_prompt
+    # 生成情報（pnginfo["parameters"]）から正のプロンプト全体を抽出する
+    # 通常、pnginfo["parameters"] は複数行になっており、
+    # 「Negative prompt:」という行が現れるまでが正のプロンプトとみなされます。
+    info = params.pnginfo.get("parameters", None)
+    if info:
+        lines = info.split("\n")
+        positive_lines = []
+        for line in lines:
+            # 「Negative prompt:」で始まる行があればそこで終了
+            if line.strip().lower().startswith("negative prompt:"):
+                break
+            positive_lines.append(line)
+        # 各行の前後の余分な空白を除去し、カンマで結合して正のプロンプト全体を作成
+        final_pos_prompt = ", ".join(
+            [l.strip() for l in positive_lines if l.strip() != ""]
+        )
+
+        # ※必要に応じて負のプロンプトも同様に抽出できますが、
+        # 今回は pnginfo 内の「Negative prompt:」以降の文字列をそのまま使用します。
+        # ここでは、既存の params.p.negative_prompt を fallback とします。
+        final_neg_prompt = params.p.negative_prompt
+    else:
+        final_pos_prompt = params.p.prompt
+        final_neg_prompt = params.p.negative_prompt
 
     # 生成情報（annotation）およびタグを生成する
     annotation = None
@@ -128,23 +149,23 @@ def on_image_saved(params: script_callbacks.ImageSaveParams):
     if shared.opts.save_generationinfo_to_google_drive:
         annotation = info
     if shared.opts.save_positive_prompt_to_google_drive:
-        if pos_prompt:
+        if final_pos_prompt:
             if shared.opts.use_prompt_parser_for_google_drive:
-                tags += Parser.prompt_to_tags(pos_prompt)
+                tags += Parser.prompt_to_tags(final_pos_prompt)
             else:
-                tags += process_prompt(pos_prompt)
+                tags += process_prompt(final_pos_prompt)
     if shared.opts.save_negative_prompt_to_google_drive == "tag":
-        if neg_prompt:
+        if final_neg_prompt:
             if shared.opts.use_prompt_parser_for_google_drive:
-                tags += Parser.prompt_to_tags(neg_prompt)
+                tags += Parser.prompt_to_tags(final_neg_prompt)
             else:
-                tags += process_prompt(neg_prompt)
+                tags += process_prompt(final_neg_prompt)
     elif shared.opts.save_negative_prompt_to_google_drive == "n:tag":
-        if neg_prompt:
+        if final_neg_prompt:
             if shared.opts.use_prompt_parser_for_google_drive:
-                tags += [f"n:{x}" for x in Parser.prompt_to_tags(neg_prompt)]
+                tags += [f"n:{x}" for x in Parser.prompt_to_tags(final_neg_prompt)]
             else:
-                tags += process_prompt(neg_prompt, prefix="n:")
+                tags += process_prompt(final_neg_prompt, prefix="n:")
 
     if shared.opts.additional_tags_for_google_drive:
         gen = TagGenerator(p=params.p, image=params.image)
