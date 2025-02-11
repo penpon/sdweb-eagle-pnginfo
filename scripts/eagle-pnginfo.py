@@ -2,6 +2,7 @@ import os
 import shutil  # （今回のコードでは使わなくなりますが、他の用途で必要な場合は残しておいてください）
 import gradio as gr
 import re
+from datetime import datetime
 
 from modules import paths, script_callbacks, shared
 from scripts.parser import Parser
@@ -183,8 +184,20 @@ def on_image_saved(params: script_callbacks.ImageSaveParams):
             dprint(e)
             return
 
-    # 画像ファイルに追加情報を埋め込む
-    destination_file = os.path.join(google_drive_folder, basename)
+    # 画像生成時の日付ディレクトリを作成（例："2025-02-12"）
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    date_folder = os.path.join(google_drive_folder, date_str)
+    if not os.path.exists(date_folder):
+        try:
+            os.makedirs(date_folder, exist_ok=True)
+            dprint("DEBUG: 日付ディレクトリを作成しました: " + date_folder)
+        except Exception as e:
+            dprint("DEBUG: 日付ディレクトリの作成に失敗しました")
+            dprint(e)
+            return
+
+    # 保存先は日付ディレクトリ内とする
+    destination_file = os.path.join(date_folder, basename)
     try:
         im = Image.open(fullfn)
         meta = PngImagePlugin.PngInfo()
