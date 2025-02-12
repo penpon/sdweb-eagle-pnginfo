@@ -37,6 +37,19 @@ def findFolderByName(r_posts, target_name, findByID=False):
     return _ret
 
 
+def findFolderByNameAndExtendTag(r_posts, extend_tag, folder_name):
+    """
+    extendTags に extend_tag が含まれ、かつ folder_name と一致するフォルダを探す。
+    見つかればフォルダオブジェクトを返し、なければ None
+    """
+    _all_folder = getAllFolder(r_posts)
+    for f in _all_folder:
+        # folder の名前が一致、かつ extend_tag が含まれていれば OK
+        if f.get("name") == folder_name and extend_tag in f.get("extendTags", []):
+            return f
+    return None
+
+
 def getAllFolder(r_posts):
     """ get dict of {"folderId": _data, ..."""
 
