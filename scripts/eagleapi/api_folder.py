@@ -5,7 +5,15 @@ import sys
 
 from . import api_util
 
-def create(newfoldername, server_url="http://localhost", port=41595, allow_duplicate_name=True, timeout_connect=3, timeout_read=10):
+
+def create(
+    newfoldername,
+    server_url="http://localhost",
+    port=41595,
+    allow_duplicate_name=True,
+    timeout_connect=3,
+    timeout_read=10,
+):
     """EAGLE API:/api/folder/list
 
     Method: POST
@@ -20,6 +28,7 @@ def create(newfoldername, server_url="http://localhost", port=41595, allow_dupli
         if newfoldername and newfoldername != "":
             _data.update({"folderName": newfoldername})
         return _data
+
     data = _init_data(newfoldername)
 
     # check duplicate if needed
@@ -27,14 +36,24 @@ def create(newfoldername, server_url="http://localhost", port=41595, allow_dupli
         r_post = list()
         _ret = api_util.findFolderByName(r_post, newfoldername)
         if _ret != None or len(_ret) > 0:
-            print(f"ERROR: create folder with same name is forbidden by option. [eagleapi.folder.create] foldername=\"{newfoldername}\"", file=sys.stderr)
+            print(
+                f'ERROR: create folder with same name is forbidden by option. [eagleapi.folder.create] foldername="{newfoldername}"',
+                file=sys.stderr,
+            )
             return
 
     r_post = requests.post(API_URL, json=data, timeout=(timeout_connect, timeout_read))
     return r_post
 
 
-def rename(folderId, newName, server_url="http://localhost", port=41595, timeout_connect=3, timeout_read=10):
+def rename(
+    folderId,
+    newName,
+    server_url="http://localhost",
+    port=41595,
+    timeout_connect=3,
+    timeout_read=10,
+):
     """EAGLE API:/api/folder/rename
 
     Method: POST
@@ -42,10 +61,7 @@ def rename(folderId, newName, server_url="http://localhost", port=41595, timeout
     Returns:
         list(response dict): return list of response.json()
     """
-    data = {
-        "folderId": folderId,
-        "newName": newName
-    }
+    data = {"folderId": folderId, "newName": newName}
     API_URL = f"{server_url}:{port}/api/folder/rename"
     r_post = requests.post(API_URL, json=data, timeout=(timeout_connect, timeout_read))
     return r_post
