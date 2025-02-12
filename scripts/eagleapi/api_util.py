@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 
 from . import api_folder
 
+
 def get_url_port(server_url_port=""):
     if not server_url_port or server_url_port == "":
         return None, None
@@ -16,9 +17,11 @@ def get_url_port(server_url_port=""):
     port = o.port
     return _url, port
 
+
 # util for /api/folder/list
 def findFolderByID(r_posts, target_id):
     return findFolderByName(r_posts, target_id, findByID=True)
+
 
 def findFolderByName(r_posts, target_name, findByID=False):
     _ret = []
@@ -26,22 +29,27 @@ def findFolderByName(r_posts, target_name, findByID=False):
         return None
     _all_folder = getAllFolder(r_posts)
     for _data in _all_folder:
-        if (findByID and _data.get("id", "") == target_name) or (_data.get("name", "") == target_name):
+        if (findByID and _data.get("id", "") == target_name) or (
+            _data.get("name", "") == target_name
+        ):
             _ret = _data
             break
     return _ret
 
+
 def getAllFolder(r_posts):
     """ get dict of {"folderId": _data, ..."""
+
     def dig_folder(data, dig_count, dig_limit=10):
-        dig_count+=1
-        if(dig_count>dig_limit):
+        dig_count += 1
+        if dig_count > dig_limit:
             return []
         _ret = [data]
         if "children" in data and len(data["children"]) > 0:
             for _child in data["children"]:
                 _ret += dig_folder(_child, dig_count)
         return _ret
+
     _ret = []
     if not r_posts:
         return None
@@ -53,11 +61,13 @@ def getAllFolder(r_posts):
             _ret += dig_folder(_data, 0)
     return _ret
 
+
 #
 # Support functions
 #
 
-def print_response(_res:requests.Response):
+
+def print_response(_res: requests.Response):
     print(f"status code : {_res.status_code}")
     print(f"headers     : {_res.headers}")
     print(f"text        : {_res.text}")
@@ -67,14 +77,23 @@ def print_response(_res:requests.Response):
     print(f"content     : {_res.content}")
     print(f"content decode: {_res.content.decode(encoding=_res.apparent_encoding)}")
 
-def get_json_from_response(_res:requests.Response):
+
+def get_json_from_response(_res: requests.Response):
     try:
         _result = _res.json()
         return _result
     except:
         return _res
 
-def find_or_create_folder(folder_name_or_id, allow_create_new_folder=False, server_url="http://localhost", port=41595, timeout_connect=3, timeout_read=10):
+
+def find_or_create_folder(
+    folder_name_or_id,
+    allow_create_new_folder=False,
+    server_url="http://localhost",
+    port=41595,
+    timeout_connect=3,
+    timeout_read=10,
+):
     """
     Find or Create folder on Eagle, by folderId or FolderName
 
@@ -90,8 +109,13 @@ def find_or_create_folder(folder_name_or_id, allow_create_new_folder=False, serv
 
     """
     _eagle_folderid = ""
-    if folder_name_or_id and folder_name_or_id !="":
-        _ret_folder_list = api_folder.list(server_url=server_url, port=port, timeout_connect=timeout_connect, timeout_read=timeout_read)
+    if folder_name_or_id and folder_name_or_id != "":
+        _ret_folder_list = api_folder.list(
+            server_url=server_url,
+            port=port,
+            timeout_connect=timeout_connect,
+            timeout_read=timeout_read,
+        )
 
         # serach by name
         _ret = findFolderByName(_ret_folder_list, folder_name_or_id)
@@ -103,8 +127,14 @@ def find_or_create_folder(folder_name_or_id, allow_create_new_folder=False, serv
             if _ret and len(_ret) > 0:
                 _eagle_folderid = _ret.get("id", "")
         if _eagle_folderid == "":
-            if allow_create_new_folder: # allow new
-                _r_get = api_folder.create(folder_name_or_id, server_url=server_url, port=port, timeout_connect=timeout_connect, timeout_read=timeout_read)
+            if allow_create_new_folder:  # allow new
+                _r_get = api_folder.create(
+                    folder_name_or_id,
+                    server_url=server_url,
+                    port=port,
+                    timeout_connect=timeout_connect,
+                    timeout_read=timeout_read,
+                )
                 try:
                     _eagle_folderid = _r_get.json().get("data").get("id")
                 except:
