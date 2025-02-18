@@ -205,6 +205,21 @@ def on_image_saved(params: script_callbacks.ImageSaveParams):
             meta.add_text("Annotation", annotation)
         if tags:
             meta.add_text("Tags", ", ".join(tags))
+        # Parameters 情報の埋め込み
+        if info:
+            meta.add_text("parameters", info)
+        else:
+            generation_info = (
+                f"{params.p.prompt}\n"
+                f"Negative prompt: {params.p.negative_prompt}\n"
+                f"Steps: {params.p.steps}, "
+                f"Sampler: {getattr(params.p, 'sampler_name', 'N/A')}, "
+                f"CFG scale: {params.p.cfg_scale}, "
+                f"Seed: {params.p.seed}, "
+                f"Size: {params.p.width}x{params.p.height}"
+            )
+            meta.add_text("parameters", generation_info)
+
         # 画像を転送先フォルダに、メタデータ付きで保存（上書き保存ではなく新たなファイルとして作成）
         im.save(destination_file, pnginfo=meta)
         dprint("DEBUG: 画像ファイルに情報を埋め込み、Google Drive に保存しました: " + destination_file)
