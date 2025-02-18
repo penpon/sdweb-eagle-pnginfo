@@ -19,7 +19,7 @@ try:
 except ImportError:
     pass
 
-DEBUG = False
+DEBUG = True
 # Google Colab環境でマウント済みDriveのパス
 mounted_drive_folder = "/content/gdrive/MyDrive/Eagle"
 # スクリプトフォルダのパス
