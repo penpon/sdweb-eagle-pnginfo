@@ -1,17 +1,17 @@
 import os
-import shutil  # （今回のコードでは使わなくなりますが、他の用途で必要な場合は残しておいてください）
+import shutil  # ※今回のコードでは使用しないが、他用途用に残しておく
 import gradio as gr
 import re
 from datetime import datetime
 
 from modules import paths, script_callbacks, shared
-from scripts.parser import Parser
+from scripts.parser import Parser  # prompt_parserは使わないので利用しません
 from scripts.tag_generator import TagGenerator
 
-# Pillow のインポート（PNG 画像へのメタデータ埋め込みに使用）
+# Pillow: PNG画像へのメタデータ埋め込み用
 from PIL import Image, PngImagePlugin
 
-# Paperspace Gradient環境でGoogle Drive APIを利用するためのインポート
+# Paperspace Gradient環境用: Google Drive API
 try:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
@@ -19,24 +19,11 @@ try:
 except ImportError:
     pass
 
-# --- ここからパッチ処理 ---
-# shared.loaded_hypernetworkが存在しない場合、Noneを設定
-if not hasattr(shared, "loaded_hypernetwork"):
-    shared.loaded_hypernetwork = None
-
-# KDiffusionSamplerにdefault_eta属性が存在しない場合、0.0を設定（モジュールパスは環境に合わせて調整してください）
-try:
-    from modules.sd_samplers import KDiffusionSampler
-
-    if not hasattr(KDiffusionSampler, "default_eta"):
-        setattr(KDiffusionSampler, "default_eta", 0.0)
-except Exception as e:
-    # エラー内容をDEBUG出力（DEBUG=Trueの場合のみ表示）
-    print("DEBUG: KDiffusionSampler のパッチ適用に失敗: " + str(e))
-# --- ここまでパッチ処理 ---
-
-DEBUG = True
-google_drive_folder = "/content/gdrive/MyDrive/Eagle"  # Google Colab環境用
+DEBUG = False
+# Google Colab環境でマウント済みDriveのパス
+mounted_drive_folder = "/content/gdrive/MyDrive/Eagle"
+# スクリプトフォルダのパス
+path_root = paths.script_path
 
 
 def dprint(msg):
@@ -45,173 +32,78 @@ def dprint(msg):
 
 
 # -----------------------------------------------------------------------------
-# ヘルパー関数：プロンプト文字列の分割
+# プロンプト文字列の処理
 # -----------------------------------------------------------------------------
 def split_prompt(prompt):
     """
-    プロンプト文字列をカンマまたは "BREAK"（大文字・小文字問わず）を区切り文字として分割します。
-
+    プロンプト文字列をカンマまたは "BREAK"（大文字・小文字問わず）で分割する。
     例:
-      "BREAK
-      <lora:wreal_consolidated:0.5>,<lora:add-detail-xl:1>"
-    は ["BREAK", "<lora:wreal_consolidated:0.5>", "<lora:add-detail-xl:1>"] に分割されます。
+      "BREAK\n<lora:wreal_consolidated:0.5>,<lora:add-detail-xl:1>"
+    → ["BREAK", "<lora:wreal_consolidated:0.5>", "<lora:add-detail-xl:1>"]
     """
     tokens = re.split(r",|\s*(?i:break)\s*", prompt)
-    tokens = [token.strip() for token in tokens if token and token.strip() != ""]
-    return tokens
+    return [token.strip() for token in tokens if token.strip()]
 
 
 def process_prompt(prompt, prefix=""):
     """
-    プロンプト文字列を分割し、必要に応じて各トークンに接頭辞を付与して返します。
-    ※通常、Parser.prompt_to_tags() で既に正のプロンプト全体が対象となっている前提です。
+    分割済みプロンプトに必要なら接頭辞を付与して返す。
     """
     tokens = split_prompt(prompt)
-    if prefix:
-        tokens = [f"{prefix}{token}" for token in tokens]
-    return tokens
+    return [f"{prefix}{token}" for token in tokens] if prefix else tokens
 
 
 # -----------------------------------------------------------------------------
-# 現在のスクリプトフォルダのパスを取得
+# プロンプト情報の抽出とタグ生成
 # -----------------------------------------------------------------------------
-path_root = paths.script_path
-
-
-def on_ui_settings():
-    shared.opts.add_option(
-        "use_google_colab_env",
-        shared.OptionInfo(
-            False,
-            "Google Colab環境",
-            section=("google_drive_transfer", "Eagle Pnginfo"),
-        ),
-    )
-    shared.opts.add_option(
-        "use_paperspace_gradient_env",
-        shared.OptionInfo(
-            False,
-            "Paperspace Gradient環境",
-            section=("google_drive_transfer", "Eagle Pnginfo"),
-        ),
-    )
-    # Google Drive への転送用設定項目を追加します
-    shared.opts.add_option(
-        "enable_google_drive_transfer",
-        shared.OptionInfo(
-            False,
-            "Google Drive に転送する",
-            section=("google_drive_transfer", "Eagle Pnginfo"),
-        ),
-    )
-    shared.opts.add_option(
-        "save_generationinfo_to_google_drive",
-        shared.OptionInfo(
-            False,
-            "生成情報を画像に埋め込む",
-            section=("google_drive_transfer", "Eagle Pnginfo"),
-        ),
-    )
-    shared.opts.add_option(
-        "save_positive_prompt_to_google_drive",
-        shared.OptionInfo(
-            False,
-            "正のプロンプトをタグとして保存",
-            section=("google_drive_transfer", "Eagle Pnginfo"),
-        ),
-    )
-    shared.opts.add_option(
-        "save_negative_prompt_to_google_drive",
-        shared.OptionInfo(
-            "n:tag",
-            "負のプロンプトをタグとして保存",
-            gr.Radio,
-            {"choices": ["None", "tag", "n:tag"]},
-            section=("google_drive_transfer", "Eagle Pnginfo"),
-        ),
-    )
-    shared.opts.add_option(
-        "use_prompt_parser_for_google_drive",
-        shared.OptionInfo(
-            False,
-            "タグ保存時に prompt parser を使用",
-            section=("google_drive_transfer", "Eagle Pnginfo"),
-        ),
-    )
-    shared.opts.add_option(
-        "additional_tags_for_google_drive",
-        shared.OptionInfo(
-            "", "追加タグ (カンマ区切り)", section=("google_drive_transfer", "Eagle Pnginfo")
-        ),
-    )
-    # 転送先フォルダは固定 /content/gdrive/MyDrive/Eagle とするため、オプションは不要です
-
-
-def on_image_saved(params: script_callbacks.ImageSaveParams):
-    if not shared.opts.enable_google_drive_transfer:
-        dprint("DEBUG:on_image_saved: Google Drive 転送機能は無効です")
-        return
-    else:
-        dprint("DEBUG:on_image_saved: 転送機能有効。Google Drive に画像を転送します。")
-
-    # 保存済み画像ファイルの絶対パスを取得
-    fullfn = os.path.join(path_root, params.filename)
-    basename = os.path.basename(fullfn)
-    filename_without_ext = os.path.splitext(basename)[0]
-
-    # 生成情報（pnginfo["parameters"]）から正のプロンプト全体を抽出する
-    info = params.pnginfo.get("parameters", None)
+def extract_prompt_info(params):
+    """
+    pnginfoから正のプロンプト（および負のプロンプトのfallback）を抽出する。
+    """
+    info = params.pnginfo.get("parameters")
     if info:
         lines = info.split("\n")
         positive_lines = []
         for line in lines:
             if line.strip().lower().startswith("negative prompt:"):
                 break
-            positive_lines.append(line)
-        final_pos_prompt = ", ".join(
-            [l.strip() for l in positive_lines if l.strip() != ""]
-        )
-        final_neg_prompt = params.p.negative_prompt
+            positive_lines.append(line.strip())
+        final_positive = ", ".join([l for l in positive_lines if l])
+        final_negative = params.p.negative_prompt
     else:
-        final_pos_prompt = params.p.prompt
-        final_neg_prompt = params.p.negative_prompt
+        final_positive = params.p.prompt
+        final_negative = params.p.negative_prompt
+    return info, final_positive, final_negative
 
-    annotation = None
+
+def generate_tags(params, positive_prompt, negative_prompt):
+    """
+    オプションに応じてタグおよびAnnotationを生成する。
+    タグ生成は常に process_prompt を利用する。
+    """
+    annotation = (
+        params.pnginfo.get("parameters") if shared.opts.embed_generation_info else None
+    )
     tags = []
-    if shared.opts.save_generationinfo_to_google_drive:
-        annotation = info
-    if shared.opts.save_positive_prompt_to_google_drive:
-        if final_pos_prompt:
-            if shared.opts.use_prompt_parser_for_google_drive:
-                tags += Parser.prompt_to_tags(final_pos_prompt)
-            else:
-                tags += process_prompt(final_pos_prompt)
-    if shared.opts.save_negative_prompt_to_google_drive == "tag":
-        if final_neg_prompt:
-            if shared.opts.use_prompt_parser_for_google_drive:
-                tags += Parser.prompt_to_tags(final_neg_prompt)
-            else:
-                tags += process_prompt(final_neg_prompt)
-    elif shared.opts.save_negative_prompt_to_google_drive == "n:tag":
-        if final_neg_prompt:
-            if shared.opts.use_prompt_parser_for_google_drive:
-                tags += [f"n:{x}" for x in Parser.prompt_to_tags(final_neg_prompt)]
-            else:
-                tags += process_prompt(final_neg_prompt, prefix="n:")
+    if shared.opts.save_positive_prompt_tags and positive_prompt:
+        tags += process_prompt(positive_prompt)
+    if negative_prompt:
+        if shared.opts.save_negative_prompt_tags == "tag":
+            tags += process_prompt(negative_prompt)
+        elif shared.opts.save_negative_prompt_tags == "n:tag":
+            tags += process_prompt(negative_prompt, prefix="n:")
+    if shared.opts.additional_tags:
+        tag_gen = TagGenerator(p=params.p, image=params.image)
+        additional = tag_gen.generate_from_p(shared.opts.additional_tags)
+        if additional:
+            tags += additional
+    return annotation, tags
 
-    if shared.opts.additional_tags_for_google_drive:
-        gen = TagGenerator(p=params.p, image=params.image)
-        _tags = gen.generate_from_p(shared.opts.additional_tags_for_google_drive)
-        if _tags:
-            tags += _tags
 
-    try:
-        im = Image.open(fullfn)
-    except Exception as e:
-        dprint("DEBUG: 画像ファイルのオープンに失敗しました")
-        dprint(e)
-        return
-
+def create_png_metadata(annotation, tags, info, params):
+    """
+    PNG画像に埋め込むメタデータを生成する。
+    """
     meta = PngImagePlugin.PngInfo()
     if annotation:
         meta.add_text("Annotation", annotation)
@@ -230,32 +122,37 @@ def on_image_saved(params: script_callbacks.ImageSaveParams):
             f"Size: {params.p.width}x{params.p.height}"
         )
         meta.add_text("parameters", generation_info)
+    return meta
 
-    # 環境に応じた保存処理
-    if shared.opts.use_paperspace_gradient_env:
-        # Paperspace Gradient環境の場合
-        main_folder_id = "1NuzFVjymjx5ByHPVqYKTDjDj6R3BlKvU"
-        # 一時ファイルパスを /tmp 以下に作成
-        temp_filepath = os.path.join("/tmp", "temp_" + basename)
+
+# -----------------------------------------------------------------------------
+# 画像のGoogle Drive保存処理（環境に応じたアップロード方法を統合）
+# -----------------------------------------------------------------------------
+def save_image_to_drive(
+    image, png_metadata, filename, main_folder_id="1NuzFVjymjx5ByHPVqYKTDjDj6R3BlKvU"
+):
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    if shared.opts.use_paperspace_env:
+        # Paperspace環境の場合: Google Drive API を利用してアップロード
+        temp_image_path = os.path.join("/tmp", "temp_" + filename)
         try:
-            im.save(temp_filepath, pnginfo=meta)
-            dprint("DEBUG: 画像ファイルを一時ファイルに保存しました: " + temp_filepath)
+            image.save(temp_image_path, pnginfo=png_metadata)
+            dprint("DEBUG: 一時画像ファイルを保存しました: " + temp_image_path)
         except Exception as e:
-            dprint("DEBUG: 一時ファイルへの保存に失敗しました")
+            dprint("DEBUG: 一時画像ファイルの保存に失敗しました")
             dprint(e)
             return
 
         try:
-            # service_account.jsonはカレントディレクトリに存在している前提
             credentials = service_account.Credentials.from_service_account_file(
                 os.path.join(path_root, "service_account.json"),
                 scopes=["https://www.googleapis.com/auth/drive"],
             )
             drive_service = build("drive", "v3", credentials=credentials)
-
-            # 日付ディレクトリの作成（または取得）
-            date_str = datetime.now().strftime("%Y-%m-%d")
-            query = f"name='{date_str}' and mimeType='application/vnd.google-apps.folder' and '{main_folder_id}' in parents and trashed=false"
+            query = (
+                f"name='{date_str}' and mimeType='application/vnd.google-apps.folder' "
+                f"and '{main_folder_id}' in parents and trashed=false"
+            )
             response = (
                 drive_service.files()
                 .list(q=query, spaces="drive", fields="files(id, name)")
@@ -278,60 +175,127 @@ def on_image_saved(params: script_callbacks.ImageSaveParams):
                 )
                 date_folder_id = folder.get("id")
                 dprint("DEBUG: 日付フォルダを作成しました: " + date_str)
-
-            # 画像ファイルのアップロード先として日付フォルダを指定
-            file_metadata = {"name": basename, "parents": [date_folder_id]}
-            media = MediaFileUpload(temp_filepath, mimetype="image/png")
+            file_metadata = {"name": filename, "parents": [date_folder_id]}
+            media = MediaFileUpload(temp_image_path, mimetype="image/png")
             file = (
                 drive_service.files()
                 .create(body=file_metadata, media_body=media, fields="id")
                 .execute()
             )
-            dprint(
-                "DEBUG: 画像ファイルをPaperspace GradientのGoogle Drive日付フォルダにアップロードしました: "
-                + str(file.get("id"))
-            )
+            dprint("DEBUG: Google Driveにアップロード完了 (ID): " + str(file.get("id")))
         except Exception as e:
             dprint("DEBUG: Google Driveへのアップロードに失敗しました")
             dprint(e)
         finally:
             try:
-                os.remove(temp_filepath)
-                dprint("DEBUG: 一時ファイルを削除しました: " + temp_filepath)
+                os.remove(temp_image_path)
+                dprint("DEBUG: 一時画像ファイルを削除しました: " + temp_image_path)
             except Exception as e:
-                dprint("DEBUG: 一時ファイルの削除に失敗しました")
+                dprint("DEBUG: 一時画像ファイルの削除に失敗しました")
                 dprint(e)
     else:
-        # Google Colab環境の場合（従来の処理）
-        if not os.path.exists(google_drive_folder):
-            try:
-                os.makedirs(google_drive_folder, exist_ok=True)
-                dprint("DEBUG: Google Drive 転送先フォルダを作成しました: " + google_drive_folder)
-            except Exception as e:
-                dprint("DEBUG: Google Drive 転送先フォルダの作成に失敗しました")
-                dprint(e)
-                return
-
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        date_folder = os.path.join(google_drive_folder, date_str)
-        if not os.path.exists(date_folder):
-            try:
-                os.makedirs(date_folder, exist_ok=True)
-                dprint("DEBUG: 日付ディレクトリを作成しました: " + date_folder)
-            except Exception as e:
-                dprint("DEBUG: 日付ディレクトリの作成に失敗しました")
-                dprint(e)
-                return
-
-        destination_file = os.path.join(date_folder, basename)
+        # Colab環境の場合: マウント済みDriveに直接保存
+        if not os.path.exists(mounted_drive_folder):
+            os.makedirs(mounted_drive_folder, exist_ok=True)
+            dprint("DEBUG: マウント済みDriveフォルダを作成しました: " + mounted_drive_folder)
+        drive_date_folder = os.path.join(mounted_drive_folder, date_str)
+        if not os.path.exists(drive_date_folder):
+            os.makedirs(drive_date_folder, exist_ok=True)
+            dprint("DEBUG: 日付フォルダを作成しました: " + drive_date_folder)
+        destination_path = os.path.join(drive_date_folder, filename)
         try:
-            im.save(destination_file, pnginfo=meta)
-            dprint("DEBUG: 画像ファイルに情報を埋め込み、Google Drive に保存しました: " + destination_file)
+            image.save(destination_path, pnginfo=png_metadata)
+            dprint("DEBUG: Colabのマウント済みDriveに保存しました: " + destination_path)
         except Exception as e:
-            dprint("DEBUG: 画像ファイルの情報埋め込みおよび保存に失敗しました")
+            dprint("DEBUG: Colabのマウント済みDriveへの保存に失敗しました")
             dprint(e)
 
 
+# -----------------------------------------------------------------------------
+# on_image_saved コールバック
+# -----------------------------------------------------------------------------
+def on_image_saved(params: script_callbacks.ImageSaveParams):
+    if not shared.opts.enable_drive_transfer:
+        dprint("DEBUG: Drive 転送機能は無効です")
+        return
+    dprint("DEBUG: Drive 転送機能有効。画像処理を開始します。")
+
+    image_path = os.path.join(path_root, params.filename)
+    filename = os.path.basename(image_path)
+
+    # プロンプト情報の抽出とタグ生成
+    info, positive_prompt, negative_prompt = extract_prompt_info(params)
+    annotation, tags = generate_tags(params, positive_prompt, negative_prompt)
+
+    try:
+        image_obj = Image.open(image_path)
+    except Exception as e:
+        dprint("DEBUG: 画像ファイルのオープンに失敗しました")
+        dprint(e)
+        return
+
+    png_metadata = create_png_metadata(annotation, tags, info, params)
+    save_image_to_drive(image_obj, png_metadata, filename)
+
+
+# -----------------------------------------------------------------------------
+# UI設定の登録
+# -----------------------------------------------------------------------------
+def on_ui_settings():
+    shared.opts.add_option(
+        "use_colab_env",
+        shared.OptionInfo(
+            False, "Google Colab環境", section=("google_drive_transfer", "Eagle Pnginfo")
+        ),
+    )
+    shared.opts.add_option(
+        "use_paperspace_env",
+        shared.OptionInfo(
+            False,
+            "Paperspace Gradient環境",
+            section=("google_drive_transfer", "Eagle Pnginfo"),
+        ),
+    )
+    shared.opts.add_option(
+        "enable_drive_transfer",
+        shared.OptionInfo(
+            False,
+            "Google Drive に転送する",
+            section=("google_drive_transfer", "Eagle Pnginfo"),
+        ),
+    )
+    shared.opts.add_option(
+        "embed_generation_info",
+        shared.OptionInfo(
+            False, "生成情報を画像に埋め込む", section=("google_drive_transfer", "Eagle Pnginfo")
+        ),
+    )
+    shared.opts.add_option(
+        "save_positive_prompt_tags",
+        shared.OptionInfo(
+            False, "正のプロンプトをタグとして保存", section=("google_drive_transfer", "Eagle Pnginfo")
+        ),
+    )
+    shared.opts.add_option(
+        "save_negative_prompt_tags",
+        shared.OptionInfo(
+            "n:tag",
+            "負のプロンプトをタグとして保存",
+            gr.Radio,
+            {"choices": ["None", "tag", "n:tag"]},
+            section=("google_drive_transfer", "Eagle Pnginfo"),
+        ),
+    )
+    shared.opts.add_option(
+        "additional_tags",
+        shared.OptionInfo(
+            "", "追加タグ (カンマ区切り)", section=("google_drive_transfer", "Eagle Pnginfo")
+        ),
+    )
+
+
+# -----------------------------------------------------------------------------
 # コールバックの登録
+# -----------------------------------------------------------------------------
 script_callbacks.on_image_saved(on_image_saved)
 script_callbacks.on_ui_settings(on_ui_settings)
